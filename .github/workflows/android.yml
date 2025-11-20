@@ -6,52 +6,50 @@ on:
 jobs:
   emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 最大6時間
+    timeout-minutes: 360  # 最大6時間（無料枠上限）
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # KVM有効化（必須・高速化）
+      # KVM有効化（高速化必須）
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger
 
-      # 最速Android 14 Emulator起動（2025年現在これが最強）
-      - name: Start Android 14 Emulator (Pixel 6 + Ultra Fast noVNC)
+      # 最速Android 14 Emulator起動（2025年現在最強）
+      - name: Start Android 14 Emulator (Samsung Galaxy S10 + Ultra Fast noVNC)
         run: |
           docker run -d \
             --name android-emulator \
             --device /dev/kvm \
             -p 6080:6080 \
             -p 5555:5555 \
-            -e DEVICE="pixel_6" \
+            -e EMULATOR_DEVICE="Samsung Galaxy S10" \
             -e WEB_VNC=true \
-            -e RAM_SIZE=4096 \
-            -e NO_VNC_RESOLUTION=1080x2340 \
             budtmo/docker-android:emulator_14.0
 
-          echo "🚀 エミュレータ起動中...（初回はイメージダウンロードで1〜2分、起動完了まで約90秒）"
-          sleep 120  # 安全マージン（必要に応じて調整可）
+          echo "🚀 エミュレータ起動中...（初回イメージダウンロードで1〜2分、起動まで約90秒）"
+          sleep 120  # 安全マージン
 
-      # ポート6080を公開 → ログに表示されるリンクをスマホでタップするだけ！
-      - name: 🎉 Expose noVNC (スマホで即接続可能！)
+      # ポート6080公開 → ログのリンクをスマホでタップ！
+      - name: 🎉 Expose noVNC (スマホで即接続！)
         run: |
           echo ""
           echo "===================================================================="
-          echo "   🎯 スマホでこのリンクをタップ → 即Android 14（Pixel 6）が起動！"
-          echo "   超サクサク・タッチ操作完璧・縦持ち最適化済みです！！"
+          echo "   🎯 スマホでこのリンクをタップ → 即Android 14（Samsung Galaxy S10）が起動！"
+          echo "   タッチ操作完璧・モバイル最適化済み（フルスクリーン推奨）"
           echo "===================================================================="
-          echo "   下記の Forwarding リンクをタップ（自動で表示されます）"
+          echo "   下記の Forwarding リンクをタップ（自動表示されます）"
           echo ""
           echo "   ➡️ https://xxxxxxx.github.dev/?port=6080"
           echo ""
-          echo "   （パスワードなし・フルスクリーン推奨・ピンチズームも効きます）"
+          echo "   （パスワードなし・ピンチズーム対応）"
           echo "===================================================================="
           sleep 999999  # ほぼ無限キープ
 
-      # 最大6時間キープ（GitHub Actions無料枠の上限）
+      # 最大6時間キープ
       - name: Keep alive (max 6 hours)
         if: always()
         run: sleep 21600
