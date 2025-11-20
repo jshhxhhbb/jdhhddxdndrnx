@@ -1,53 +1,81 @@
-name: Android Emulator with Web Access via noVNC
+name: Android Emulator (Guacamole + Fast & Stable)
 
-on: workflow_dispatch  # Trigger manually to start the emulator session
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_minutes:
+        description: 'How long to keep emulator alive (max 360)'
+        required: true
+        default: '120'
 
 jobs:
   emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # Adjust as needed, max 360 minutes for GitHub Actions
+    timeout-minutes: ${{ fromJson(inputs.timeout_minutes == '' && '360' || inputs.timeout_minutes) }}
 
     steps:
-      - name: Checkout repository (optional)
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Enable KVM for hardware acceleration
+      - name: Free up disk space (optional but recommended)
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
 
-      - name: Run Docker Android Emulator with noVNC
+      - name: Enable KVM
         run: |
-          docker run -d -p 6080:6080 \
-            -e EMULATOR_DEVICE="Samsung Galaxy S10" \
-            -e WEB_VNC=true \
+          sudo mkdir -p /etc/udev/rules.d
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger
+
+      - name: Start Android Emulator with Guacamole (Fast & Mobile-Friendly)
+        run: |
+          docker run -d \
+            --name android-emulator \
             --device /dev/kvm \
-            --name android-container \
-            budtmo/docker-android:emulator_11.0
-          
-          # Wait for the emulator to boot (adjust sleep if needed)
-          echo "Waiting for emulator to start..."
-          sleep 120
-          
-          # Optional: Check status
-          docker exec android-container adb devices
+            -p 8080:8080 \
+            -e DEVICE="pixel_7" \
+            -e ANDROID_SDK_VERSION=34 \
+            -e RAM_SIZE=4096 \
+            -e HEAP_SIZE=512 \
+            -e LOCALE="ja_JP" \
+            aladin8877/docker-android-emulator:latest
+
+          echo "Waiting for emulator and Guacamole to fully boot..."
+          sleep 90  # 通常70〜90秒で完全に立ち上がる（超速）
 
       - name: Install cloudflared
         run: |
-          wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
 
-      - name: Start Cloudflare Tunnel
+      - name: Create Cloudflare Tunnel to Guacamole
+        id: tunnel
         run: |
-          cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
-          sleep 10  # Wait for tunnel to establish
-          TUNNEL_URL=$(grep -o 'https://.*trycloudflare.com' tunnel.log)
-          echo "Access the emulator via noVNC at: $TUNNEL_URL"
+          echo "Starting tunnel to Guacamole (port 8080)..."
+          timeout 300 cloudflared tunnel --url http://localhost:8080 > tunnel.log 2>&1 &
+          
+          # Wait until URL appears
+          for i in {1..60}; do
+            URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' tunnel.log | head -1)
+            if [[ -n "$URL" ]]; then
+              echo "Success! Access URL: $URL"
+              echo "url=$URL" >> $GITHUB_OUTPUT
+              break
+            fi
+            sleep 5
+          done
 
-      - name: Keep the job running for interaction
+          if [[ -z "$URL" ]]; then
+            echo "Tunnel timeout"
+            cat tunnel.log
+            exit 1
+          fi
+
+      - name: Keep workflow alive
         run: |
-          echo "Emulator is running. Access the Cloudflare tunnel URL from the logs to connect via browser."
-          echo "The workflow will timeout after the set duration."
-          sleep 3600  # Keep alive for 1 hour; adjust as needed
+          echo "Emulator is running! Access URL:"
+          echo "${{ steps.tunnel.outputs.url }}"
+          echo "This session will stay alive for up to ${{ inputs.timeout_minutes || 360 }} minutes."
+          sleep ${{ (inputs.timeout_minutes == '' && 360 || inputs.timeout_minutes) * 60 }}
