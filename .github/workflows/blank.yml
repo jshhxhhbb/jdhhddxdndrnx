@@ -1,4 +1,3 @@
-
 name: Android Emulator with Web Access via noVNC
 
 on: workflow_dispatch  # Trigger manually to start the emulator session
@@ -35,7 +34,7 @@ jobs:
           docker exec android-container adb devices
 
       - name: Expose noVNC port via ngrok
-        uses: luisboto/ngrok-tunnel-action@v1.0.0  # Use the latest version available
+        uses: luisboto/ngrok-tunnel-action@v0.1.7.2  # Use the latest version available
         with:
           timeout: 1h
           port: 6080
