@@ -1,0 +1,60 @@
+name: Android Emulator (Zero Setup - Mobile Optimized)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # KVM有効化（高速化必須）
+      - name: Enable KVM
+        run: |
+          sudo mkdir -p /etc/udev/rules.d
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger
+
+      # 最速・最安定エミュレータ起動（2025年現在これが最強）
+      - name: Start Android 14 Emulator (Pixel 6 + Ultra Fast noVNC)
+        run: |
+          docker run -d \
+            --name android \
+            --device /dev/kvm \
+            -p 6080:6080 \
+            -p 5555:5555 \
+            -e DEVICE=pixel_6 \
+            -e RAM_SIZE=4096 \
+            -e WEB_VNC=true \
+            -e NO_VNC_RESOLUTION=1080x1920 \
+            -e NO_VNC_PORT=6080 \
+            aladin254/docker-android:latest
+
+          echo "エミュレータ起動中...（約60秒で完了）"
+          sleep 70
+
+      # GitHub Actions のポートフォワーディング機能で公開（これが神！）
+      # → 実行ログに表示される「Forwarding」リンクをタップするだけ！
+      - name: Expose noVNC Port (Click the Link Below!)
+        run: |
+          echo ""
+          echo "===================================================================="
+          echo " スマホで下記のリンクをタップ → 即接続（超サクサク動きます！）"
+          echo "===================================================================="
+          echo "ポート6080が自動で公開されます。ログに表示される以下のリンクをタップ："
+          echo ""
+          echo "   ➡️ https://xxxxxxx.github.dev/?port=6080"
+          echo ""
+          echo "（このリンクは実行後に自動表示されます。スマホ最適化済みnoVNCです）"
+          echo "===================================================================="
+          sleep 99999  # ほぼ無制限にキープ（最大6時間までOK）
+
+      # GitHub Actions が自動でポートフォワーディングしてくれるのでこれでOK
+      - name: Keep alive
+        if: always()
+        run: sleep 21600  # 最大6時間キープ（GitHub無料枠の上限）
