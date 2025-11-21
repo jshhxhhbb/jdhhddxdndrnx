@@ -1,55 +1,62 @@
-name: Android Emulator (Zero Setup - Mobile Optimized)
+name: Ubuntu Desktop (noVNC + localtunnel)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 手動実行のみ
 
 jobs:
-  emulator:
+  ubuntu-desktop:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 最大6時間（無料枠上限）
+    timeout-minutes: 360   # 最大6時間（GitHubの制限）
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # KVM有効化（高速化必須）
-      - name: Enable KVM
+      - name: Setup Node.js (for localtunnel)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install localtunnel
+        run: npm install -g localtunnel
+
+      - name: Install XFCE + TightVNC + Firefox
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm.rules
-          sudo udevadm control --reload-rules && sudo udevadm trigger
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies tightvncserver dbus-x11 firefox gnome-icon-theme
 
-      # 最速Android 14 Emulator起動（2025年現在最強）
-      - name: Start Android 14 Emulator (Samsung Galaxy S10 + Ultra Fast noVNC)
+      - name: Set VNC password (12345678)
         run: |
-          docker run -d \
-            --name android-emulator \
-            --device /dev/kvm \
-            -p 6080:6080 \
-            -p 5555:5555 \
-            -e EMULATOR_DEVICE="Samsung Galaxy S10" \
-            -e WEB_VNC=true \
-            budtmo/docker-android:emulator_14.0
+          mkdir -p ~/.vnc
+          echo '12345678' | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
 
-          echo "🚀 エミュレータ起動中...（初回イメージダウンロードで1〜2分、起動まで約90秒）"
-          sleep 120  # 安全マージン
-
-      # ポート6080公開 → ログのリンクをスマホでタップ！
-      - name: 🎉 Expose noVNC (スマホで即接続！)
+      - name: Configure xstartup for XFCE
         run: |
-          echo ""
-          echo "===================================================================="
-          echo "   🎯 スマホでこのリンクをタップ → 即Android 14（Samsung Galaxy S10）が起動！"
-          echo "   タッチ操作完璧・モバイル最適化済み（フルスクリーン推奨）"
-          echo "===================================================================="
-          echo "   下記の Forwarding リンクをタップ（自動表示されます）"
-          echo ""
-          echo "   ➡️ https://xxxxxxx.github.dev/?port=6080"
-          echo ""
-          echo "   （パスワードなし・ピンチズーム対応）"
-          echo "===================================================================="
-          sleep 999999  # ほぼ無限キープ
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/bash
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export XDG_CURRENT_DESKTOP="XFCE"
+          startxfce4 &
+          EOF
+          chmod +x ~/.vnc/xstartup
 
-      # 最大6時間キープ
-      - name: Keep alive (max 6 hours)
-        if: always()
-        run: sleep 21600
+      - name: Start VNC Server
+        run: |
+          vncserver :1 -geometry 1440x900 -depth 24
+          sleep 8
+
+      - name: Install noVNC
+        run: |
+          git clone https://github.com/novnc/noVNC.git ~/noVNC
+
+      - name: Start noVNC proxy
+        run: |
+          ~/noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
+
+      - name: Create Tunnel (localtunnel) ← これがURL表示
+        run: |
+          echo "=== 少し待ってから下記のURLにアクセスしてください ==="
+          echo "パスワードは 12345678 です"
+          lt --port 6080 --print-urls true
