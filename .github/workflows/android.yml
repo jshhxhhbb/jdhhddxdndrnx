@@ -1,5 +1,5 @@
 # .github/workflows/ubuntu-desktop.yml
-name: Ubuntu Desktop (noVNC + Cloudflare Tunnel)
+name: Ubuntu Desktop (Mobile-Friendly noVNC + Cloudflare Tunnel)
 
 on:
   workflow_dispatch:
@@ -34,35 +34,42 @@ jobs:
           EOF
           chmod +x ~/.vnc/xstartup
 
-      - name: Start VNC Server
+      - name: Start VNC Server (大きな解像度で起動 → スケーリングでスマホでも高精細)
         run: |
-          vncserver :1 -geometry 1440x900 -depth 24
+          vncserver :1 -geometry 1920x1080 -depth 24
           sleep 5
 
-      - name: Install noVNC (最新版対応)
+      - name: Install noVNC + モバイル完全対応設定
         run: |
           git clone https://github.com/novnc/noVNC.git ~/noVNC
-          # 最新のnoVNCでは index.html が無いので、自動で vnc.html に飛ばす簡易ページを作成
           cat > ~/noVNC/index.html <<'EOF'
           <!DOCTYPE html>
-          <html><head><meta http-equiv="refresh" content="0; url=vnc.html"></head>
-          <body>Redirecting to noVNC...</body></html>
+          <html>
+          <head>
+            <title>Ubuntu Desktop (Mobile Ready)</title>
+            <meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&quality=7&compression=5">
+          </head>
+          <body style="margin:0;background:#000;color:#fff;font-family:system-ui;text-align:center;padding-top:20vh;">
+            <h2>Ubuntuデスクトップに接続中...</h2>
+            <p>スマホでも自動で画面サイズにフィットします<br>パスワード: 12345678</p>
+          </body>
+          </html>
           EOF
 
-      - name: Start noVNC websocket proxy
+      - name: Start noVNC proxy
         run: |
           ~/noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
 
-      - name: Download cloudflared (最新版自動取得)
+      - name: Download cloudflared
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O ~/cloudflared
           chmod +x ~/cloudflared
 
-      - name: ★★★ ここにURLが出ます ★★★
+      - name: ★★★ URLはここに出ます ★★★
         run: |
           echo ""
           echo "════════════════════════════════════════════════════════════"
-          echo "　　５秒くらい待ってから下記のURLをブラウザで開いてください"
+          echo "　　スマホでも完璧にフィットします！（5秒待ってアクセス）"
           echo "　　　　　　　　　　パスワード → 12345678"
           echo "════════════════════════════════════════════════════════════"
           echo ""
