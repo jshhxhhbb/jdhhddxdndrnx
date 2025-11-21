@@ -1,24 +1,16 @@
-name: Ubuntu Desktop (noVNC + localtunnel)
+name: Ubuntu Desktop (noVNC + Cloudflare Tunnel)
 
 on:
-  workflow_dispatch:  # 手動実行のみ
+  workflow_dispatch:
 
 jobs:
   ubuntu-desktop:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # 最大6時間（GitHubの制限）
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup Node.js (for localtunnel)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install localtunnel
-        run: npm install -g localtunnel
 
       - name: Install XFCE + TightVNC + Firefox
         run: |
@@ -45,18 +37,27 @@ jobs:
       - name: Start VNC Server
         run: |
           vncserver :1 -geometry 1440x900 -depth 24
-          sleep 8
+          sleep 5
 
       - name: Install noVNC
         run: |
           git clone https://github.com/novnc/noVNC.git ~/noVNC
+          # 自動で vnc.html にリダイレクトさせるおまじない
+          sed -i 's/<title>noVNC<\/title>/<meta http-equiv="refresh" content="0; url=vnc.html">/' ~/noVNC/index.html
 
       - name: Start noVNC proxy
         run: |
           ~/noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
 
-      - name: Create Tunnel (localtunnel) ← これがURL表示
+      - name: Download & Setup Cloudflared
         run: |
-          echo "=== 少し待ってから下記のURLにアクセスしてください ==="
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+          chmod +x cloudflared
+
+      - name: Start Cloudflare Tunnel (URLがここに表示されます)
+        run: |
+          echo "=================================================================="
+          echo "少し待ってから下記の「https://xxxx.trycloudflare.com」にアクセスしてください"
           echo "パスワードは 12345678 です"
-          lt --port 6080 --print-urls true
+          echo "=================================================================="
+          ./cloudflared tunnel --url http://localhost:6080
