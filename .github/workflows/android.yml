@@ -1,3 +1,4 @@
+# .github/workflows/ubuntu-desktop.yml
 name: Ubuntu Desktop (noVNC + Cloudflare Tunnel)
 
 on:
@@ -9,27 +10,26 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install XFCE + TightVNC + Firefox
+      - name: Install Desktop + VNC + Browser
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies tightvncserver dbus-x11 firefox gnome-icon-theme
+          sudo apt install -y xfce4 xfce4-goodies tightvncserver firefox dbus-x11
 
-      - name: Set VNC password (12345678)
+      - name: Set VNC Password (12345678)
         run: |
           mkdir -p ~/.vnc
           echo '12345678' | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
 
-      - name: Configure xstartup for XFCE
+      - name: Create xstartup for XFCE
         run: |
-          cat > ~/.vnc/xstartup << 'EOF'
+          cat > ~/.vnc/xstartup <<'EOF'
           #!/bin/bash
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
-          export XDG_CURRENT_DESKTOP="XFCE"
           startxfce4 &
           EOF
           chmod +x ~/.vnc/xstartup
@@ -39,25 +39,31 @@ jobs:
           vncserver :1 -geometry 1440x900 -depth 24
           sleep 5
 
-      - name: Install noVNC
+      - name: Install noVNC (最新版対応)
         run: |
           git clone https://github.com/novnc/noVNC.git ~/noVNC
-          # 自動で vnc.html にリダイレクトさせるおまじない
-          sed -i 's/<title>noVNC<\/title>/<meta http-equiv="refresh" content="0; url=vnc.html">/' ~/noVNC/index.html
+          # 最新のnoVNCでは index.html が無いので、自動で vnc.html に飛ばす簡易ページを作成
+          cat > ~/noVNC/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html><head><meta http-equiv="refresh" content="0; url=vnc.html"></head>
+          <body>Redirecting to noVNC...</body></html>
+          EOF
 
-      - name: Start noVNC proxy
+      - name: Start noVNC websocket proxy
         run: |
           ~/noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
 
-      - name: Download & Setup Cloudflared
+      - name: Download cloudflared (最新版自動取得)
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
-          chmod +x cloudflared
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O ~/cloudflared
+          chmod +x ~/cloudflared
 
-      - name: Start Cloudflare Tunnel (URLがここに表示されます)
+      - name: ★★★ ここにURLが出ます ★★★
         run: |
-          echo "=================================================================="
-          echo "少し待ってから下記の「https://xxxx.trycloudflare.com」にアクセスしてください"
-          echo "パスワードは 12345678 です"
-          echo "=================================================================="
-          ./cloudflared tunnel --url http://localhost:6080
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo "　　５秒くらい待ってから下記のURLをブラウザで開いてください"
+          echo "　　　　　　　　　　パスワード → 12345678"
+          echo "════════════════════════════════════════════════════════════"
+          echo ""
+          ~/cloudflared tunnel --url http://localhost:6080
