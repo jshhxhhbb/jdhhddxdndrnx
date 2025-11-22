@@ -1,5 +1,5 @@
 # .github/workflows/ubuntu-desktop.yml
-name: Ubuntu Desktop (Ultra Low Latency + Serveo Tunnel)
+name: Ubuntu Desktop (Pinggy Ultra Low Latency Tunnel)
 
 on:
   workflow_dispatch:
@@ -34,31 +34,31 @@ jobs:
           EOF
           chmod +x ~/.vnc/xstartup
 
-      - name: Start VNC Server (低帯域・低遅延設定)
+      - name: Start VNC Server (極低遅延設定)
         run: |
           vncserver :1 -geometry 1920x1080 -depth 16
           sleep 5
 
-      - name: Install noVNC + 超低遅延モバイル最適化
+      - name: Install noVNC + 極限低遅延モバイル最適化
         run: |
           git clone https://github.com/novnc/noVNC.git ~/noVNC
           cat > ~/noVNC/index.html <<'EOF'
           <!DOCTYPE html>
           <html>
           <head>
-            <title>Ubuntu Desktop - Ultra Low Latency</title>
-            <meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&quality=5&compression=2&show_dot=true">
+            <title>Ubuntu Desktop - Pinggy Ultra Low Latency</title>
+            <meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&quality=4&compression=1&cursor=arrow&show_dot=false">
             <style>
               body { margin:0; background:#000; color:#0f0; font-family:system-ui; text-align:center; padding-top:30vh; }
-              .bar { background:#111; padding:15px; border-radius:10px; display:inline-block; }
+              .box { background:#111; padding:20px; border-radius:15px; display:inline-block; border:2px solid #0f0; }
             </style>
           </head>
           <body>
-            <div class="bar">
-              <h2>接続中…（超低遅延モード）</h2>
-              <p>パスワード → <br>
-              スマホでもヌルヌル動きます！<br>
-              少し待ってから下記のURLを開いてください</p>
+            <div class="box">
+              <h2>超低遅延接続中…</h2>
+              <p>パスワード → 12345678<br>
+              スマホでも完全フィット＆ヌルヌル動作保証<br>
+              5～10秒待って下記のURLを開いてください</p>
             </div>
           </body>
           </html>
@@ -68,13 +68,14 @@ jobs:
         run: |
           ~/noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
 
-      - name: ★★★ Serveo Tunnel起動 → URLがここに表示されます ★★★
+      - name: ★★★ Pinggy Tunnel起動 → URLがここに表示されます ★★★
         run: |
           echo ""
           echo "════════════════════════════════════════════════════════════"
-          echo "    超低遅延モード起動中…（5～10秒待ってください）"
+          echo "    極低遅延Pinggyトンネル起動中…（5～15秒待機）"
           echo "    パスワードは 12345678 です"
-          echo "    ↓↓↓ 下に https://xxxx.serveo.net が出たら即アクセス ↓↓↓"
+          echo "    ↓↓↓ 下に https://xxxxxx.a.pinggy.link が出たら即アクセス ↓↓↓"
+          echo "    （スマホでもPCでも過去最高のヌルヌル体験になります）"
           echo "════════════════════════════════════════════════════════════"
           echo ""
-          ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 serveo.net
+          ssh -p 443 -o StrictHostKeyChecking=no -R 0:localhost:6080 a.pinggy.io
