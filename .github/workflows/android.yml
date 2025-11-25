@@ -1,52 +1,91 @@
+
+
+Of course. Let's analyze the workflow and the error log.
+
+### Explanation of the Error
+
+The workflow did not fail due to a bug in the commands themselves, but because it **reached the time limit** you set.
+
+The key line in your log is:
+`Time exceeded`
+
+And the final error:
+`Error: Process completed with exit code 255.`
+
+Here’s a step-by-step breakdown of what happened:
+
+1.  **Long-Running Process**: The final step in your job is the `ssh` command to create the Pinggy tunnel: `ssh -p 443 -o StrictHostKeyChecking=no -R 0:localhost:6080 a.pinggy.io`.
+2.  **Blocking Command**: This `ssh` command is designed to run continuously. It establishes a connection and keeps it open, forwarding traffic. It will **never exit on its own** unless the connection is interrupted.
+3.  **Job Timeout**: Because the final step never finishes, the entire job never finishes. You specified `timeout-minutes: 360` (which is 6 hours). The GitHub Actions runner allowed the job to run for the full 6 hours.
+4.  **Automatic Termination**: After 360 minutes, the runner automatically killed the job to prevent it from running forever. This termination caused the `ssh` process to be killed, resulting in the `Connection to a.pinggy.io closed by remote host` message and the final `Process completed with exit code 255` error.
+
+**Conclusion:** The workflow is working as designed. It creates a desktop environment that is accessible for up to 6 hours, and then it is automatically cleaned up. The "error" message is just the artifact of this automatic shutdown.
+
+### Improved and Annotated Workflow
+
+Below is your original workflow with added comments to clarify each step and a small improvement to the user-facing message to explain the timeout. This will make it clearer for you or anyone else who uses it in the future.
+
+```yaml
 # .github/workflows/ubuntu-desktop.yml
 name: Ubuntu Desktop (Pinggy Ultra Low Latency Tunnel)
 
 on:
+  # This workflow is triggered manually from the GitHub Actions tab.
   workflow_dispatch:
 
 jobs:
   ubuntu-desktop:
     runs-on: ubuntu-latest
+    # The job will automatically terminate after 6 hours (360 minutes) to prevent runaway costs.
+    # The final SSH command is a long-running process and will not exit on its own,
+    # so this timeout is the intended way to end the session.
     timeout-minutes: 360
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Desktop + VNC + SSH
+      - name: Install Desktop Environment, VNC Server, and Tools
         run: |
           sudo apt update
           sudo apt install -y xfce4 xfce4-goodies tightvncserver firefox openssh-client dbus-x11
 
-      - name: Set VNC Password (12345678)
+      - name: Set VNC Password
+        # The password for VNC connection will be '12345678'
         run: |
           mkdir -p ~/.vnc
           echo '12345678' | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
 
-      - name: Create xstartup for XFCE
+      - name: Create xstartup script for XFCE Desktop
+        # This script runs when a VNC client connects and starts the desktop environment.
         run: |
           cat > ~/.vnc/xstartup <<'EOF'
           #!/bin/bash
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
+          # Start the XFCE desktop environment in the background
           startxfce4 &
           EOF
           chmod +x ~/.vnc/xstartup
 
-      - name: Start VNC Server (極低遅延設定)
+      - name: Start VNC Server
+        # Starts a VNC server on display :1 (which corresponds to port 5901)
         run: |
           vncserver :1 -geometry 1920x1080 -depth 16
-          sleep 5
+          sleep 5 # Give the server a moment to fully start
 
-      - name: Install noVNC + 極限低遅延モバイル最適化
+      - name: Download and Configure noVNC
+        # noVNC provides a way to access VNC through a web browser.
         run: |
           git clone https://github.com/novnc/noVNC.git ~/noVNC
+          # Overwrite the default index.html to auto-connect with low-latency settings.
           cat > ~/noVNC/index.html <<'EOF'
           <!DOCTYPE html>
           <html>
           <head>
             <title>Ubuntu Desktop - Pinggy Ultra Low Latency</title>
+            <!-- Immediately redirect to the VNC client with optimized settings -->
             <meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&quality=4&compression=1&cursor=arrow&show_dot=false">
             <style>
               body { margin:0; background:#000; color:#0f0; font-family:system-ui; text-align:center; padding-top:30vh; }
@@ -56,26 +95,35 @@ jobs:
           <body>
             <div class="box">
               <h2>超低遅延接続中…</h2>
-              <p>パスワード → 12345678<br>
-              スマホでも完全フィット＆ヌルヌル動作保証<br>
-              5～10秒待って下記のURLを開いてください</p>
+              <p>パスワード → 12345678</p>
+              <p>スマホでも完全フィット＆ヌルヌル動作保証</p>
+              <p>5～10秒待って下記のURLを開いてください</p>
             </div>
           </body>
           </html>
           EOF
 
-      - name: Start noVNC proxy
+      - name: Start noVNC Proxy
+        # This proxy connects the web browser (WebSocket) to the VNC server (TCP).
+        # It runs in the background (&) so the workflow can continue to the next step.
         run: |
           ~/noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
 
-      - name: ★★★ Pinggy Tunnel起動 → URLがここに表示されます ★★★
+      - name: Start Pinggy Tunnel and Display Connection URL
+        # This is the final step. It creates a secure tunnel from the public internet
+        # to the noVNC proxy running on the runner. The SSH command will run for the
+        # entire duration of the job, printing the public URL in the logs.
         run: |
           echo ""
-          echo "════════════════════════════════════════════════════════════"
+          echo "═════════════════════════════════════════════════════════════════"
           echo "    極低遅延Pinggyトンネル起動中…（5～15秒待機）"
           echo "    パスワードは 12345678 です"
           echo "    ↓↓↓ 下に https://xxxxxx.a.pinggy.link が出たら即アクセス ↓↓↓"
           echo "    （スマホでもPCでも過去最高のヌルヌル体験になります）"
-          echo "════════════════════════════════════════════════════════════"
+          echo "    ※注意：このセッションは6時間後に自動的に終了します。"
+          echo "═════════════════════════════════════════════════════════════════"
           echo ""
+          # This command is blocking and keeps the job alive.
+          # The output will contain the public URL.
           ssh -p 443 -o StrictHostKeyChecking=no -R 0:localhost:6080 a.pinggy.io
+```
