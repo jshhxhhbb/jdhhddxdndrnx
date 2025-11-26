@@ -1,5 +1,5 @@
 # .github/workflows/desktop.yml
-name: 🚀 Web Desktop (noVNC - localhost.run)
+name: 🚀 Web Desktop (noVNC - Cloudflare Tunnel)
 
 on:
   workflow_dispatch:  # 手動起動
@@ -7,20 +7,23 @@ on:
 jobs:
   start-desktop:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6時間で自動終了（GitHub制限対応）
+    timeout-minutes: 360  # 6時間で自動終了
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup cloudflared
+        uses: AnimMouse/setup-cloudflared@v2  # アカウント不要でインストール
+
       - name: Install dependencies
         run: |
           sudo apt update -qq
-          sudo apt install -y xfce4 xfce4-goodies tightvncserver websockify novnc firefox openssh-client jq
+          sudo apt install -y xfce4 xfce4-goodies tightvncserver novnc firefox jq
 
       - name: Setup VNC and noVNC
         run: |
-          # VNCパスワード生成（ランダムでプライバシー確保）
+          # VNCパスワード生成（ランダム）
           mkdir -p ~/.vnc
           VNC_PASS=$(openssl rand -base64 12)
           echo "=== VNC パスワード（接続時必須） ==="
@@ -29,39 +32,63 @@ jobs:
           echo $VNC_PASS | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
 
-          # VNCサーバー起動
+          # VNCサーバー起動（バックグラウンド）
           vncserver :1 -geometry 1280x720 -depth 24 &
+          VNC_PID=$!
           sleep 5
 
-          # noVNC起動（ポート6080）
-          websockify --web=/usr/share/novnc/ 6080 localhost:5901 &
+          # noVNC起動（ポート6080、バックグラウンド）
+          mkdir -p /tmp/novnc-logs
+          nohup websockify --web=/usr/share/novnc/ 6080 localhost:5901 > /tmp/novnc-logs/websockify.log 2>&1 &
+          NOVNC_PID=$!
 
           echo "VNC_PASS=$VNC_PASS" >> $GITHUB_ENV
+          echo "VNC_PID=$VNC_PID" >> $GITHUB_ENV
+          echo "NOVNC_PID=$NOVNC_PID" >> $GITHUB_ENV
 
-      - name: Expose via localhost.run (No Account Needed)
+      - name: Expose via Cloudflare Tunnel (No Account Needed)
+        id: tunnel
         run: |
-          # localhost.runでポート6080を公開（SSHコマンドで即HTTPS URL生成）
-          # 背景実行してURL取得（5秒待機）
-          ssh -R 80:localhost:6080 nokey@localhost.run -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -N &
-          SSH_PID=$!
-          sleep 5
+          # Cloudflare Tunnel起動（HTTP、ゲストモードでランダムURL生成）
+          nohup cloudflared tunnel --http 0.0.0.0:6080 --no-autoupdate --loglevel info > /tmp/cloudflared.log 2>&1 &
+          CLOUDFLARE_PID=$!
 
-          # URL取得（localhost.runは公開後、curlで確認可能だが簡易的に固定パターン使用。実際はログ監視）
-          # 注意: localhost.runのURLはランダム。初回接続で生成されるので、ログで確認推奨
-          PUBLIC_URL="https://$(curl -s ifconfig.me).localhost.run/vnc.html"  # 簡易例（実際は動的）
+          # トンネルURL取得（ログからjqで抽出、5秒待機）
+          sleep 5
+          while [ -z "$PUBLIC_URL" ]; do
+            PUBLIC_URL=$(tail -f /tmp/cloudflared.log 2>/dev/null | grep -o 'https://.*\.trycloudflare\.com' | head -n1 || echo "")
+            sleep 2
+          done
+
+          # URLが取得できなかった場合のフォールバック（稀）
+          if [ -z "$PUBLIC_URL" ]; then
+            PUBLIC_URL=$(curl -s https://api.trycloudflare.com/get-random-tunnel | jq -r '.url' 2>/dev/null || echo "https://manual-check-logs.trycloudflare.com")
+          fi
+
           echo "🚀 デスクトップ起動！（6時間で終了）"
           echo ""
           echo "📺 noVNC URL（ブラウザで開く）:"
-          echo "https://$(hostname -I | awk '{print $1}').localhost.run/vnc.html"  # 動的ホスト使用（調整必要）
-          echo "   ※初回アクセスでURL安定化。ログで確認"
+          echo "$PUBLIC_URL/vnc.html"
           echo ""
           echo "🔐 VNCパスワード: ${VNC_PASS}"
           echo ""
           echo "⚠️ URLとパスワードは秘密に！他人共有NG"
-          echo "SSH_PID=$SSH_PID" >> $GITHUB_ENV
+          echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+          echo "CLOUDFLARE_PID=$CLOUDFLARE_PID" >> $GITHUB_ENV
 
       - name: Keep alive for 6 hours
+        if: always()
         run: |
-          # SSHトンネル維持
-          wait $SSH_PID
-          sleep 6h  # トンネル待機 + 追加時間
+          # プロセス維持（killせずsleepのみ、終了時にActionsが自動kill）
+          echo "トンネルPID: ${CLODFLARE_PID} を維持中..."
+          sleep 6h
+
+      - name: Cleanup on exit
+        if: always()
+        run: |
+          # 終了時にプロセスkill（エラー時も実行）
+          if [ ! -z "${VNC_PID}" ]; then kill ${VNC_PID} || true; fi
+          if [ ! -z "${NOVNC_PID}" ]; then kill ${NOVNC_PID} || true; fi
+          if [ ! -z "${CLOUDFLARE_PID}" ]; then kill ${CLOUDFLARE_PID} || true; fi
+          vncserver -kill :1 || true
+          echo "クリーンアップ完了"
