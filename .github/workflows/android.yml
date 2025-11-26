@@ -1,94 +1,85 @@
-# .github/workflows/desktop.yml
-name: 🚀 Web Desktop (noVNC - Cloudflare Tunnel)
+# ファイル名: .github/workflows/desktop.yml
 
+name: 'Web-based Desktop Environment'
+
+# このワークフローを手動で実行できるようにする
 on:
-  workflow_dispatch:  # 手動起動
+  workflow_dispatch:
 
 jobs:
-  start-desktop:
+  build:
+    # Ubuntuの最新版で実行
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6時間で自動終了
 
     steps:
-      - name: Checkout
+      # 1. リポジトリのコードをチェックアウト（今回は不要だがお作法として）
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup cloudflared
-        uses: AnimMouse/setup-cloudflared@v2  # アカウント不要でインストール
-
-      - name: Install dependencies
+      # 2. デスクトップ環境とVNCサーバーをインストール
+      - name: Install Desktop and VNC
         run: |
-          sudo apt update -qq
-          sudo apt install -y xfce4 xfce4-goodies tightvncserver novnc firefox jq
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lxde-core tightvncserver websockify novnc
 
-      - name: Setup VNC and noVNC
+      # 3. VNCのパスワードを設定
+      - name: Set VNC Password
         run: |
-          # VNCパスワード生成（ランダム）
           mkdir -p ~/.vnc
-          VNC_PASS=$(openssl rand -base64 12)
-          echo "=== VNC パスワード（接続時必須） ==="
-          echo "VNC Password: $VNC_PASS"
-          echo "====================================="
-          echo $VNC_PASS | vncpasswd -f > ~/.vnc/passwd
+          # GitHub Secretsからパスワードを読み込み、ファイルに保存
+          echo "${{ secrets.VNC_PASSWORD }}" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
 
-          # VNCサーバー起動（バックグラウンド）
-          vncserver :1 -geometry 1280x720 -depth 24 &
-          VNC_PID=$!
-          sleep 5
-
-          # noVNC起動（ポート6080、バックグラウンド）
-          mkdir -p /tmp/novnc-logs
-          nohup websockify --web=/usr/share/novnc/ 6080 localhost:5901 > /tmp/novnc-logs/websockify.log 2>&1 &
-          NOVNC_PID=$!
-
-          echo "VNC_PASS=$VNC_PASS" >> $GITHUB_ENV
-          echo "VNC_PID=$VNC_PID" >> $GITHUB_ENV
-          echo "NOVNC_PID=$NOVNC_PID" >> $GITHUB_ENV
-
-      - name: Expose via Cloudflare Tunnel (No Account Needed)
-        id: tunnel
+      # 4. VNCサーバーを起動
+      - name: Start VNC Server
         run: |
-          # Cloudflare Tunnel起動（HTTP、ゲストモードでランダムURL生成）
-          nohup cloudflared tunnel --http 0.0.0.0:6080 --no-autoupdate --loglevel info > /tmp/cloudflared.log 2>&1 &
-          CLOUDFLARE_PID=$!
+          # VNCサーバーをディスプレイ番号1、解像度1280x720で起動
+          vncserver :1 -geometry 1280x720 -depth 24
 
-          # トンネルURL取得（ログからjqで抽出、5秒待機）
-          sleep 5
-          while [ -z "$PUBLIC_URL" ]; do
-            PUBLIC_URL=$(tail -f /tmp/cloudflared.log 2>/dev/null | grep -o 'https://.*\.trycloudflare\.com' | head -n1 || echo "")
-            sleep 2
-          done
-
-          # URLが取得できなかった場合のフォールバック（稀）
-          if [ -z "$PUBLIC_URL" ]; then
-            PUBLIC_URL=$(curl -s https://api.trycloudflare.com/get-random-tunnel | jq -r '.url' 2>/dev/null || echo "https://manual-check-logs.trycloudflare.com")
-          fi
-
-          echo "🚀 デスクトップ起動！（6時間で終了）"
-          echo ""
-          echo "📺 noVNC URL（ブラウザで開く）:"
-          echo "$PUBLIC_URL/vnc.html"
-          echo ""
-          echo "🔐 VNCパスワード: ${VNC_PASS}"
-          echo ""
-          echo "⚠️ URLとパスワードは秘密に！他人共有NG"
-          echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
-          echo "CLOUDFLARE_PID=$CLOUDFLARE_PID" >> $GITHUB_ENV
-
-      - name: Keep alive for 6 hours
-        if: always()
+      # 5. WebからVNCに接続するためのプロキシを起動
+      - name: Start Websockify
         run: |
-          # プロセス維持（killせずsleepのみ、終了時にActionsが自動kill）
-          echo "トンネルPID: ${CLODFLARE_PID} を維持中..."
-          sleep 6h
+          # websockifyを起動し、Webブラウザからの接続(ポート6080)をVNCサーバー(ポート5901)に中継する
+          # --web=/usr/share/novnc でnoVNCのWebクライアントも一緒に提供
+          websockify --web=/usr/share/novnc 6080 localhost:5901 > websockify.log 2>&1 &
 
-      - name: Cleanup on exit
-        if: always()
+      # 6. Node.jsをインストール (localtunnelに必要)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # 7. localtunnelをインストール
+      - name: Install LocalTunnel
+        run: npm install -g localtunnel
+
+      # 8. localtunnelを起動して、Websockifyのポートを外部に公開
+      - name: Start LocalTunnel
         run: |
-          # 終了時にプロセスkill（エラー時も実行）
-          if [ ! -z "${VNC_PID}" ]; then kill ${VNC_PID} || true; fi
-          if [ ! -z "${NOVNC_PID}" ]; then kill ${NOVNC_PID} || true; fi
-          if [ ! -z "${CLOUDFLARE_PID}" ]; then kill ${CLOUDFLARE_PID} || true; fi
-          vncserver -kill :1 || true
-          echo "クリーンアップ完了"
+          # バックグラウンドでlocaltunnelを実行し、URLをファイルに保存
+          lt --port 6080 > tunnel_url.txt &
+          # localtunnelが接続を確立するまで待機
+          sleep 15
+
+      # 9. 接続情報をGitHub Actionsのログに出力
+      - name: Display Connection Info
+        run: |
+          # localtunnelが発行したURLを読み込む
+          TUNNEL_URL=$(cat tunnel_url.txt | head -n 1)
+          echo "-----------------------------------------"
+          echo "🎉 デスクトップ環境が準備できました！"
+          echo "-----------------------------------------"
+          echo "📲 以下のURLをクリックして、ブラウザでデスクトップにアクセスしてください。"
+          echo "URL: ${TUNNEL_URL}/vnc.html?autoconnect=true&resize=scale"
+          echo "-----------------------------------------"
+          echo "🔑 VNCパスワード: ${{ secrets.VNC_PASSWORD }}"
+          echo "-----------------------------------------"
+          echo "⚠️  このセッションは6時間後に自動的に終了します。"
+          echo "⚠️  接続には数秒かかることがあります。"
+          echo "-----------------------------------------"
+
+      # 10. ワークフローが終了しないように待機
+      - name: Keep workflow alive
+        run: |
+          # GitHub Actionsの最大実行時間（6時間 = 21600秒）までスリープし続ける
+          sleep 21600
