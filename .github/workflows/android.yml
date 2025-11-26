@@ -16,11 +16,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. デスクトップ環境とVNCサーバーをインストール
+      # 2. デスクトップ環境とVNCサーバー、および必要なフォントをインストール
       - name: Install Desktop and VNC
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends lxde-core tightvncserver websockify novnc
+          sudo apt-get install -y --no-install-recommends lxde-core tightvncserver websockify novnc xfonts-base xfonts-75dpi xfonts-100dpi
 
       # 3. VNCのパスワードを設定
       - name: Set VNC Password
