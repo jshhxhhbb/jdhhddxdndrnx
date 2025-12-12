@@ -19,10 +19,7 @@ jobs:
 
       - name: 'code-serverのインストールとPATHの設定'
         run: |
-          # code-serverのインストールスクリプトを実行
           curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone
-          
-          # インストールされたバイナリにPATHを通す
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: 'cloudflaredのインストールとセットアップ'
@@ -35,7 +32,7 @@ jobs:
         run: |
           # パスワードの設定
           PASSWORD_ARG=""
-          if [ -n "${{ github.event.inputs.password }}" ]; then
+          if [ -n "${{ github.event.inputs.password }}" ]]; then
             PASSWORD_ARG="--password ${{ github.event.inputs.password }}"
           else
             PASSWORD_ARG="--auth none"
@@ -43,9 +40,16 @@ jobs:
 
           # バックグラウンドでcode-serverを起動
           code-server --bind-addr 127.0.0.1:8080 $PASSWORD_ARG --disable-telemetry &
+          CODE_SERVER_PID=$!
+          echo "Code-server PID: $CODE_SERVER_PID"
+
+          # code-serverが起動するまで少し待機
+          sleep 5
 
           # バックグラウンドでcloudflaredを起動し、ログをファイルに出力
           cloudflared tunnel --url http://127.0.0.1:8080 --logfile /tmp/cloudflared.log &
+          CLOUDFLARED_PID=$!
+          echo "Cloudflared PID: $CLOUDFLARED_PID"
 
           # ログファイルから公開URLを取得（最大30秒待機）
           TUNNEL_URL=""
@@ -61,7 +65,10 @@ jobs:
 
           if [[ -z "$TUNNEL_URL" ]]; then
             echo "Failed to get tunnel URL."
-            cat /tmp/cloudflared.log # デバッグ用にログを表示
+            echo "--- Cloudflared Log ---"
+            cat /tmp/cloudflared.log
+            echo "--- Process Status ---"
+            ps aux | grep -E "(code-server|cloudflared)" | grep -v grep
             exit 1
           fi
 
