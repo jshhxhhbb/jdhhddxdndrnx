@@ -10,7 +10,6 @@ on:
 
 jobs:
   build:
-    # 公開リポジトリの標準実行時間の上限が6時間なので、それに合わせる
     timeout-minutes: 360
     runs-on: ubuntu-latest
 
@@ -18,18 +17,20 @@ jobs:
       - name: 'リポジトリのチェックアウト'
         uses: actions/checkout@v4
 
-      - name: 'code-serverのインストール'
+      - name: 'code-serverのインストールとPATHの設定'
         run: |
+          # code-serverのインストールスクリプトを実行
           curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone
-          sudo mv ./code-server-*/code-server /usr/local/bin/code-server
+          
+          # インストールされたバイナリにPATHを通す
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: 'cloudflaredのインストールとセットアップ'
         uses: AnimMouse/setup-cloudflared@v2
         with:
-          # 最新版をインストール
           version: 'latest'
 
-      - name: 'Cloudflare Tunnelの起動'
+      - name: 'code-serverとCloudflare Tunnelの起動'
         id: tunnel
         run: |
           # パスワードの設定
@@ -43,26 +44,29 @@ jobs:
           # バックグラウンドでcode-serverを起動
           code-server --bind-addr 127.0.0.1:8080 $PASSWORD_ARG --disable-telemetry &
 
-          # 一時的なトンネルを起動し、URLを取得
-          # --url ではなく --run-token を使用する方が安定しているが、ここでは簡易的に --url を使用
-          TUNNEL_URL=$(cloudflared tunnel --url http://127.0.0.1:8080 --logfile /tmp/cloudflared.log 2>&1 | grep -o 'https://.*\.trycloudflare\.com' | head -n 1)
-          
-          # URLが取得できるまで待機（最大30秒）
+          # バックグラウンドでcloudflaredを起動し、ログをファイルに出力
+          cloudflared tunnel --url http://127.0.0.1:8080 --logfile /tmp/cloudflared.log &
+
+          # ログファイルから公開URLを取得（最大30秒待機）
+          TUNNEL_URL=""
+          echo "Waiting for tunnel URL..."
           for i in {1..30}; do
             TUNNEL_URL=$(grep -o 'https://.*\.trycloudflare\.com' /tmp/cloudflared.log | tail -n 1)
             if [[ -n "$TUNNEL_URL" ]]; then
+              echo "Found tunnel URL: $TUNNEL_URL"
               break
             fi
             sleep 1
           done
 
           if [[ -z "$TUNNEL_URL" ]]; then
-            echo "Failed to get tunnel URL"
+            echo "Failed to get tunnel URL."
+            cat /tmp/cloudflared.log # デバッグ用にログを表示
             exit 1
           fi
 
+          # 次のステップで使えるようにURLをGITHUB_OUTPUTに保存
           echo "url=$TUNNEL_URL" >> $GITHUB_OUTPUT
-          echo "Tunnel URL: $TUNNEL_URL"
 
       - name: '公開URLを表示'
         run: |
@@ -74,5 +78,4 @@ jobs:
       - name: '6時間キープアライブ'
         run: |
           echo "⏳ ワークフローを6時間（21600秒）実行し続けます..."
-          # 6時間 = 6 * 60分 * 60秒 = 21600秒
           sleep 21600
