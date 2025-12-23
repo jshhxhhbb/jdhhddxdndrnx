@@ -1,88 +1,68 @@
-name: 'Launch VS Code with Cloudflare Tunnel'
+name: '📱 Mobile Optimized VS Code'
 
 on:
   workflow_dispatch:
     inputs:
       password:
-        description: 'VS Codeのアクセスパスワード (未入力の場合はパスワードなし)'
+        description: 'VS Codeパスワード (空なら認証なし)'
         required: false
         default: ''
 
 jobs:
-  build:
+  vscode:
     timeout-minutes: 360
     runs-on: ubuntu-latest
 
     steps:
-      - name: 'リポジトリのチェックアウト'
+      - name: 'Check out repository'
         uses: actions/checkout@v4
 
-      - name: 'code-serverのインストールとPATHの設定'
+      - name: 'Install Quick Tools'
         run: |
-          curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone
+          # インストールを並列化・簡略化
+          curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone &
+          sudo curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          sudo chmod +x /usr/local/bin/cloudflared
+          wait
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: 'cloudflaredのインストールとセットアップ'
-        uses: AnimMouse/setup-cloudflared@v2
-        with:
-          version: 'latest'
-
-      - name: 'code-serverとCloudflare Tunnelの起動'
+      - name: 'Launch & Extract URL'
         id: tunnel
         run: |
-          # パスワードの設定
-          PASSWORD_ARG=""
-          if [ -n "${{ github.event.inputs.password }}" ]]; then
-            PASSWORD_ARG="--password ${{ github.event.inputs.password }}"
+          # パスワード設定
+          if [ -n "${{ github.event.inputs.password }}" ]; then
+            export AUTH_TYPE="--auth password"
+            export PASSWORD="${{ github.event.inputs.password }}"
           else
-            PASSWORD_ARG="--auth none"
+            export AUTH_TYPE="--auth none"
           fi
 
-          # バックグラウンドでcode-serverを起動
-          code-server --bind-addr 127.0.0.1:8080 $PASSWORD_ARG --disable-telemetry &
-          CODE_SERVER_PID=$!
-          echo "Code-server PID: $CODE_SERVER_PID"
+          # code-server 起動
+          code-server --bind-addr 127.0.0.1:8080 $AUTH_TYPE --disable-telemetry > /dev/null 2>&1 &
 
-          # code-serverが起動するまで少し待機
-          sleep 5
+          # Cloudflare Tunnel 起動
+          cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate > /tmp/cf.log 2>&1 &
 
-          # バックグラウンドでcloudflaredを起動し、ログをファイルに出力
-          cloudflared tunnel --url http://127.0.0.1:8080 --logfile /tmp/cloudflared.log &
-          CLOUDFLARED_PID=$!
-          echo "Cloudflared PID: $CLOUDFLARED_PID"
-
-          # ログファイルから公開URLを取得（最大30秒待機）
-          TUNNEL_URL=""
-          echo "Waiting for tunnel URL..."
-          for i in {1..30}; do
-            TUNNEL_URL=$(grep -o 'https://.*\.trycloudflare\.com' /tmp/cloudflared.log | tail -n 1)
-            if [[ -n "$TUNNEL_URL" ]]; then
-              echo "Found tunnel URL: $TUNNEL_URL"
+          # URLがログに出るまで高速ループで待機
+          echo "Waiting for URL..."
+          for i in {1..20}; do
+            URL=$(grep -o 'https://.*\.trycloudflare\.com' /tmp/cf.log | head -n 1)
+            if [ -n "$URL" ]; then
+              echo "url=$URL" >> $GITHUB_OUTPUT
+              
+              # スマホで見やすいようにJob Summaryに出力
+              echo "## 🚀 VS Code Ready!" >> $GITHUB_STEP_SUMMARY
+              echo "[ここをタップしてVS Codeを開く]($URL)" >> $GITHUB_STEP_SUMMARY
+              echo "---" >> $GITHUB_STEP_SUMMARY
+              echo "- **URL:** \`$URL\`" >> $GITHUB_STEP_SUMMARY
+              echo "- **Password:** \`${{ github.event.inputs.password || 'なし' }}\`" >> $GITHUB_STEP_SUMMARY
               break
             fi
             sleep 1
           done
 
-          if [[ -z "$TUNNEL_URL" ]]; then
-            echo "Failed to get tunnel URL."
-            echo "--- Cloudflared Log ---"
-            cat /tmp/cloudflared.log
-            echo "--- Process Status ---"
-            ps aux | grep -E "(code-server|cloudflared)" | grep -v grep
-            exit 1
-          fi
-
-          # 次のステップで使えるようにURLをGITHUB_OUTPUTに保存
-          echo "url=$TUNNEL_URL" >> $GITHUB_OUTPUT
-
-      - name: '公開URLを表示'
+      - name: 'Keep Alive'
+        if: steps.tunnel.outputs.url != ''
         run: |
-          echo "🚀 VS Codeにアクセス可能です！"
-          echo "👉 公開URL: ${{ steps.tunnel.outputs.url }}"
-          echo "⚠️ このセッションは6時間後に自動的に終了します。"
-          echo "💡 パスワードを設定した場合は、アクセス時に求められます。"
-
-      - name: '6時間キープアライブ'
-        run: |
-          echo "⏳ ワークフローを6時間（21600秒）実行し続けます..."
+          echo "Session active for 6 hours..."
           sleep 21600
